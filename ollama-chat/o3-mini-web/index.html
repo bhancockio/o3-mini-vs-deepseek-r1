@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Local Ollama Chat Interface</title>
+  <style>
+    /* Layout Styles */
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      display: flex;
+      height: 100vh;
+    }
+    /* Sidebar for chat history */
+    #sidebar {
+      width: 250px;
+      background: #f5f5f5;
+      border-right: 1px solid #ccc;
+      overflow-y: auto;
+      padding: 10px;
+      box-sizing: border-box;
+      transition: width 0.3s ease;
+    }
+    /* Main content area */
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    /* Topbar containing the model selector and new chat button */
+    #topbar {
+      display: flex;
+      align-items: center;
+      padding: 10px;
+      background: #eee;
+      border-bottom: 1px solid #ccc;
+    }
+    #model-selector {
+      margin-right: 10px;
+    }
+    #chat-area {
+      flex: 1;
+      padding: 10px;
+      overflow-y: auto;
+      background: #fafafa;
+      display: flex;
+      flex-direction: column;
+    }
+    /* Message styling */
+    .message {
+      margin-bottom: 10px;
+      padding: 8px;
+      border-radius: 5px;
+      max-width: 70%;
+      position: relative;
+      word-wrap: break-word;
+    }
+    .message.user {
+      background: #d0eaff;
+      align-self: flex-end;
+    }
+    .message.bot {
+      background: #444;
+      color: #fff;
+      align-self: flex-start;
+    }
+    /* Hover actions (copy/regenerate) */
+    .hover-actions {
+      position: absolute;
+      top: -25px;
+      right: 0;
+      display: none;
+    }
+    .message:hover .hover-actions {
+      display: block;
+    }
+    /* Input area at the bottom */
+    #input-area {
+      padding: 10px;
+      background: #eee;
+      display: flex;
+      align-items: center;
+      border-top: 1px solid #ccc;
+    }
+    #chat-input {
+      flex: 1;
+      resize: none;
+      padding: 8px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      font-family: inherit;
+    }
+    button {
+      padding: 6px 12px;
+      margin-left: 5px;
+      cursor: pointer;
+    }
+    /* Loading spinner */
+    .spinner {
+      border: 4px solid rgba(0, 0, 0, 0.1);
+      border-left-color: #09f;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      animation: spin 1s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    /* Chat History Sidebar */
+    #history-list {
+      list-style: none;
+      padding: 0;
+      margin: 10px 0;
+    }
+    #history-list li {
+      padding: 5px;
+      margin-bottom: 5px;
+      background: #fff;
+      border: 1px solid #ccc;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #history-list li button {
+      font-size: 0.8em;
+      padding: 2px 4px;
+    }
+  </style>
+  <!-- Marked for Markdown rendering and Highlight.js for syntax highlighting -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css">
+</head>
+<body>
+  <!-- Chat History Sidebar -->
+  <div id="sidebar">
+    <h3>Chat History</h3>
+    <input type="text" id="history-search" placeholder="Search conversations">
+    <ul id="history-list"></ul>
+    <button id="export-history">Export History</button>
+    <input type="file" id="import-history" accept="application/json" style="display:none;">
+    <button id="import-history-btn">Import History</button>
+  </div>
+
+  <!-- Main Chat Section -->
+  <div id="main">
+    <!-- Topbar: Model selector, refresh, and New Chat button -->
+    <div id="topbar">
+      <select id="model-selector">
+        <option value="">Loading models...</option>
+      </select>
+      <button id="refresh-models">Refresh</button>
+      <span id="model-loading" style="display:none;" class="spinner"></span>
+      <button id="new-chat">New Chat</button>
+    </div>
+
+    <!-- Chat messages will appear here -->
+    <div id="chat-area"></div>
+
+    <!-- Input area -->
+    <div id="input-area">
+      <textarea id="chat-input" rows="1" placeholder="Type your message..."></textarea>
+      <button id="send-btn">Send</button>
+      <button id="stop-btn" style="display:none;">Stop</button>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+  <script>
+    /*******************
+     * Global Variables
+     *******************/
+    let currentChat = [];         // Holds messages for the current conversation
+    let currentModel = '';        // Currently selected model
+    let isStreaming = false;      // Whether we’re streaming a bot response
+    let streamController = null;  // To cancel streaming if needed
+
+    // DOM Elements
+    const chatArea = document.getElementById('chat-area');
+    const chatInput = document.getElementById('chat-input');
+    const sendBtn = document.getElementById('send-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    const modelSelector = document.getElementById('model-selector');
+    const refreshModelsBtn = document.getElementById('refresh-models');
+    const modelLoading = document.getElementById('model-loading');
+    const newChatBtn = document.getElementById('new-chat');
+    const historyList = document.getElementById('history-list');
+    const historySearch = document.getElementById('history-search');
+    const exportHistoryBtn = document.getElementById('export-history');
+    const importHistoryBtn = document.getElementById('import-history-btn');
+    const importHistoryInput = document.getElementById('import-history');
+
+    /*******************
+     * Model Selector
+     *******************/
+    async function fetchModels() {
+      modelLoading.style.display = 'inline-block';
+      try {
+        const response = await fetch('http://localhost:3000/api/tags');
+        const data = await response.json();
+        populateModelSelector(data.models);
+      } catch (error) {
+        console.error('Error fetching models:', error);
+        modelSelector.innerHTML = '<option value="">No models available</option>';
+      } finally {
+        modelLoading.style.display = 'none';
+      }
+    }
+
+    function populateModelSelector(models) {
+      if (!models || models.length === 0) {
+        modelSelector.innerHTML = '<option value="">No models available</option>';
+        return;
+      }
+      modelSelector.innerHTML = '';
+      models.forEach(model => {
+        const option = document.createElement('option');
+        option.value = model.name;
+        // Show model name and (if available) parameter size from details.
+        const details = model.details;
+        option.text = model.name + (details ? ` (${details.parameter_size || ''})` : '');
+        modelSelector.appendChild(option);
+      });
+      // Automatically set the current model to the first option.
+      currentModel = modelSelector.value;
+    }
+
+    modelSelector.addEventListener('change', () => {
+      currentModel = modelSelector.value;
+      // Optionally, you could show a loading indicator while switching.
+    });
+    refreshModelsBtn.addEventListener('click', fetchModels);
+
+    /*******************
+     * Chat Interface
+     *******************/
+    // Render a message (with Markdown and syntax highlighting)
+    function renderMessage(message) {
+      const div = document.createElement('div');
+      div.classList.add('message', message.role);
+      div.innerHTML = marked.parse(message.content);
+      // Apply syntax highlighting to any code blocks.
+      div.querySelectorAll('pre code').forEach((block) => {
+        hljs.highlightBlock(block);
+      });
+      // Create hover actions: Copy and Regenerate.
+      const hoverDiv = document.createElement('div');
+      hoverDiv.className = 'hover-actions';
+      const copyBtn = document.createElement('button');
+      copyBtn.textContent = 'Copy';
+      copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(message.content);
+      });
+      const regenerateBtn = document.createElement('button');
+      regenerateBtn.textContent = 'Regenerate';
+      regenerateBtn.addEventListener('click', () => {
+        regenerateMessage();
+      });
+      hoverDiv.appendChild(copyBtn);
+      hoverDiv.appendChild(regenerateBtn);
+      div.appendChild(hoverDiv);
+      chatArea.appendChild(div);
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    function addUserMessage(content) {
+      const message = { role: 'user', content };
+      currentChat.push(message);
+      renderMessage(message);
+    }
+
+    function addBotMessage(content) {
+      const message = { role: 'assistant', content };
+      currentChat.push(message);
+      renderMessage(message);
+    }
+
+    // Send the user message and stream the bot response
+    async function sendMessage() {
+      const text = chatInput.value.trim();
+      if (!text || !currentModel) return;
+      addUserMessage(text);
+      chatInput.value = '';
+      // Show the stop button while the response is streaming.
+      stopBtn.style.display = 'inline-block';
+      isStreaming = true;
+      try {
+        const payload = {
+          model: currentModel,
+          messages: currentChat,
+          stream: true
+        };
+        // Use the proxy on port 3000
+        streamController = new AbortController();
+        const response = await fetch('http://localhost:3000/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: streamController.signal
+        });
+        if (!response.body) throw new Error('No response body');
+
+        // Create a reader for the streaming response.
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let botContent = '';
+        // Add a placeholder for the bot response.
+        addBotMessage('');
+        const botMessageDiv = chatArea.querySelector('.message.bot:last-child');
+        while (isStreaming) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value);
+          // Append the streamed content. (This example simply appends text.)
+          botContent += chunk;
+          botMessageDiv.innerHTML = marked.parse(botContent);
+          botMessageDiv.querySelectorAll('pre code').forEach((block) => {
+            hljs.highlightBlock(block);
+          });
+        }
+        // Update the conversation with the final bot message.
+        currentChat[currentChat.length - 1].content = botContent;
+      } catch (error) {
+        console.error('Streaming error:', error);
+      } finally {
+        isStreaming = false;
+        stopBtn.style.display = 'none';
+      }
+    }
+
+    // For a simple regenerate: remove the last bot message and resend the last user input.
+    function regenerateMessage() {
+      const lastUser = currentChat.filter(m => m.role === 'user').pop();
+      if (lastUser) {
+        // Remove the last bot response if it exists.
+        if (currentChat[currentChat.length - 1].role === 'assistant') {
+          currentChat.pop();
+          // Remove the last bot message from the UI.
+          const botMessages = document.querySelectorAll('.message.bot');
+          if (botMessages.length) {
+            botMessages[botMessages.length - 1].remove();
+          }
+        }
+        // Resend the last user message.
+        sendMessage();
+      }
+    }
+
+    // Allow sending messages via Enter (without Shift)
+    sendBtn.addEventListener('click', sendMessage);
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    // Stop generation button
+    stopBtn.addEventListener('click', () => {
+      if (streamController) {
+        streamController.abort();
+        stopBtn.style.display = 'none';
+      }
+    });
+
+    // New Chat button: clear conversation (optionally archive current chat)
+    newChatBtn.addEventListener('click', () => {
+      if (confirm('Start a new chat? This will clear the current conversation.')) {
+        archiveCurrentChat();
+        currentChat = [];
+        chatArea.innerHTML = '';
+      }
+    });
+
+    /*******************
+     * Chat History
+     *******************/
+    // Auto-save current chat every 15 seconds
+    setInterval(() => {
+      if (currentChat.length) {
+        localStorage.setItem('currentChat', JSON.stringify(currentChat));
+      }
+    }, 15000);
+
+    // Load saved chat on page load
+    window.addEventListener('load', () => {
+      fetchModels();
+      const savedChat = localStorage.getItem('currentChat');
+      if (savedChat) {
+        currentChat = JSON.parse(savedChat);
+        currentChat.forEach(renderMessage);
+      }
+      loadChatHistory();
+    });
+
+    // Archive current conversation to history
+    function archiveCurrentChat() {
+      if (currentChat.length) {
+        let history = JSON.parse(localStorage.getItem('chatHistory') || '[]');
+        const timestamp = new Date().toISOString();
+        history.push({ timestamp, messages: currentChat });
+        localStorage.setItem('chatHistory', JSON.stringify(history));
+        loadChatHistory();
+      }
+      localStorage.removeItem('currentChat');
+    }
+
+    // Load chat history into sidebar
+    function loadChatHistory() {
+      historyList.innerHTML = '';
+      let history = JSON.parse(localStorage.getItem('chatHistory') || '[]');
+      history.forEach((chat, index) => {
+        const li = document.createElement('li');
+        li.textContent = chat.timestamp;
+        li.addEventListener('click', () => {
+          if (confirm('Load this conversation? Current chat will be overwritten.')) {
+            currentChat = chat.messages;
+            chatArea.innerHTML = '';
+            currentChat.forEach(renderMessage);
+          }
+        });
+        // Add delete button for each history entry.
+        const delBtn = document.createElement('button');
+        delBtn.textContent = 'Delete';
+        delBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          deleteChatHistory(index);
+        });
+        li.appendChild(delBtn);
+        historyList.appendChild(li);
+      });
+    }
+
+    function deleteChatHistory(index) {
+      let history = JSON.parse(localStorage.getItem('chatHistory') || '[]');
+      history.splice(index, 1);
+      localStorage.setItem('chatHistory', JSON.stringify(history));
+      loadChatHistory();
+    }
+
+    // Search/filter history
+    historySearch.addEventListener('input', () => {
+      const term = historySearch.value.toLowerCase();
+      const items = historyList.getElementsByTagName('li');
+      Array.from(items).forEach(item => {
+        item.style.display = item.textContent.toLowerCase().includes(term) ? '' : 'none';
+      });
+    });
+
+    // Export chat history as JSON
+    exportHistoryBtn.addEventListener('click', () => {
+      const history = localStorage.getItem('chatHistory');
+      const blob = new Blob([history], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'chatHistory.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // Import chat history from JSON
+    importHistoryBtn.addEventListener('click', () => {
+      importHistoryInput.click();
+    });
+    importHistoryInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            localStorage.setItem('chatHistory', event.target.result);
+            loadChatHistory();
+            alert('Chat history imported.');
+          } catch (error) {
+            alert('Failed to import history.');
+          }
+        };
+        reader.readAsText(file);
+      }
+    });
+
+    /*******************
+     * Auto-Expanding Textarea
+     *******************/
+    chatInput.addEventListener('input', function() {
+      this.style.height = 'auto';
+      // Increase height up to a maximum of 6 lines (approx 20px per line)
+      const lines = (this.value.match(/\n/g) || []).length + 1;
+      this.style.height = Math.min(lines, 6) * 20 + 'px';
+    });
+  </script>
+</body>
+</html>

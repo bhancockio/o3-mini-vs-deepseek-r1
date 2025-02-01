@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Local Ollama Chat Interface</title>
+    <link rel="stylesheet" href="styles.css" />
+    <!-- Marked.js: for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Highlight.js: for code syntax highlighting -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+  </head>
+  <body>
+    <header>
+      <div class="header-left">
+        <!-- Model Selector -->
+        <div class="model-selector">
+          <select id="model-select"></select>
+          <button id="refresh-models" title="Refresh Models">↻</button>
+          <span id="loading-indicator" class="hidden">Loading...</span>
+        </div>
+        <!-- New Chat Button -->
+        <button id="new-chat">New Chat</button>
+      </div>
+    </header>
+    <div class="container">
+      <!-- Chat History Sidebar -->
+      <aside id="chat-history">
+        <div class="history-header">
+          <h2>Chat History</h2>
+          <button id="toggle-history">Hide</button>
+        </div>
+        <ul id="history-list"></ul>
+        <div class="history-actions">
+          <button id="export-history">Export</button>
+          <button id="import-history">Import</button>
+          <input type="file" id="import-file" accept=".json" style="display: none" />
+        </div>
+      </aside>
+      <!-- Chat Area -->
+      <main id="chat-area">
+        <div id="messages"></div>
+        <!-- Stop Button to cancel streaming responses -->
+        <div id="stop-button-container" class="hidden">
+          <button id="stop-generation">Stop</button>
+        </div>
+      </main>
+    </div>
+    <footer>
+      <!-- Chat Input -->
+      <textarea
+        id="chat-input"
+        placeholder="Type your message here..."
+        rows="1"
+      ></textarea>
+      <button id="send">Send</button>
+    </footer>
+    <script src="script.js"></script>
+  </body>
+</html> 
