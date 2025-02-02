@@ -11,4 +11,4 @@
 **How I'm Going to Use These Models Going Forward:**
 - I will use 03 Mini for refactoring and code cleanup tasks because it reliably maintains the integrity of the existing code. Its ability to produce a minimally invasive, working solution is key.
 - Although DeepSeek provided a bold, more radical refactoring, its tendency to over-apply changes and drop critical functionality means I will avoid it for refactoring tasks and instead reserve it for generating creative ideas.
-- I appreciate some of DeepSeek’s suggestions to enforce better Python practices, and I plan to revisit these ideas later—but for now, I’ll continue refining with 03 Mini.
+- I appreciate some of DeepSeek’s suggestions to enforce better Python practices, and I plan to revisit these ideas later—but for now, I’ll continue refining with 03 Mini.`
